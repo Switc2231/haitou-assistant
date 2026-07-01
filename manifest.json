@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "海投助手",
+  "version": "0.4.7",
+  "version_name": "0.4.7-image-lock-v6",
+  "description": "海投助手：BOSS 直聘岗位收集、AI筛选、自动沟通与简历投递。",
+  "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "action": { "default_title": "海投助手" },
+  "side_panel": { "default_path": "src/sidepanel.html" },
+  "permissions": ["storage", "tabs", "scripting", "sidePanel"],
+  "host_permissions": ["*://*.zhipin.com/*", "https://api.deepseek.com/*"],
+  "background": { "service_worker": "src/background.js" },
+  "content_scripts": [
+    {
+      "matches": ["*://*.zhipin.com/web/geek/job*"],
+      "js": ["src/selectors.js", "src/content-search.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.zhipin.com/web/geek/chat*"],
+      "js": ["src/selectors.js", "src/content-chat.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

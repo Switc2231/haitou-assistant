@@ -1,0 +1,10 @@
+{
+  "name": "haitou-assistant-boss",
+  "version": "0.4.7",
+  "private": true,
+  "description": "BOSS直聘岗位收集、审核与辅助投递浏览器扩展",
+  "license": "MIT",
+  "scripts": {
+    "test": "node tests/stability-smoke.js && node tests/chat-guard-smoke.js"
+  }
+}

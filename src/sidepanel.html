@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>海投助手</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="header">
+    <div>
+      <h1>海投助手</h1>
+      <p>BOSS直聘 · 岗位收集、审核与辅助投递</p>
+    </div>
+    <span class="version-badge">v0.4.7 图片防重版</span>
+  </header>
+
+  <!-- 配置 -->
+  <section class="card">
+    <div class="card-h" data-toggle="cfgBody"><span>① 我的求职目标</span><span class="chev">▾</span></div>
+    <div class="card-b" id="cfgBody">
+      <div class="ai-panel">
+        <button class="ai-summary" type="button" id="aiToggle">
+          <span>
+            <strong>AI增强（可选）：未开启</strong>
+            <em>不填也能用本地规则；填写 API Key 后，筛选和话术会更准。</em>
+          </span>
+          <span class="chev">▾</span>
+        </button>
+        <div class="ai-fields" id="aiFields" style="display:none">
+          <label class="switch-row"><input type="checkbox" id="aiEnabled"> 启用 AI增强</label>
+          <p class="field-help">不填也能用本地规则；填写 API Key 后，筛选和话术会更准。</p>
+
+          <label>API Key</label>
+          <input type="password" id="aiApiKey" placeholder="填写你的 API Key">
+
+          <button class="btn-secondary compact" id="testAi" type="button">测试连接</button>
+        </div>
+      </div>
+
+      <label>简历图片（可选；上传后投递时会发给HR）</label>
+      <input type="file" id="resumeImg" accept="image/*">
+      <div id="imgPrev"></div>
+      <p class="field-help">发送规则：有简历图片时可以只发图片；填写简历文字并启用 DeepSeek AI 后，才会额外生成岗位自我介绍。插件/API设置提示绝不会发送给招聘方。</p>
+
+      <label>简历文字（用于筛选 + 生成招呼语）</label>
+      <textarea id="resumeText" rows="5" placeholder="粘贴你的简历：技能、项目经历、教育背景、实习经历等；不填也可用本地规则粗筛"></textarea>
+
+      <label>无AI自我介绍（填写完成后会原样发送）</label>
+      <textarea id="noAiGreeting" rows="5" placeholder="参考写法：您好，我叫【姓名】，今年【年龄】岁，【到岗时间】可以到岗。想应聘【职位】。我可以做【工作能力】，能够接受【工作条件】。希望找【工作期望】，有机会可以进一步沟通。"></textarea>
+      <p class="field-help" id="noAiGreetingStatus">选填：可以参考上面的格式，也可以完全自己写；留空时不发送文字。</p>
+
+      <label>岗位关键词（支持多行/逗号/顿号分隔）</label>
+      <textarea id="keyword" rows="4" placeholder="填写你要搜索的职位，一行一个"></textarea>
+
+      <label>本地筛选加分词（可选）</label>
+      <textarea id="priorityWords" rows="3" placeholder="留空时自动使用上面的岗位关键词；也可补充同义岗位词"></textarea>
+      <p class="field-help">仅在未启用 AI 或 AI 调用失败时使用。岗位标题、标签或 JD 命中一个目标词即可进入推荐。</p>
+
+      <label>本地筛选排除词（可修改）</label>
+      <textarea id="excludeWords" rows="3" placeholder="如：电话销售、地推、课程顾问"></textarea>
+      <p class="field-help">命中排除词时不推荐。这里可以按岗位方向自行增删，不再固定写死在后台。</p>
+
+      <label>城市</label>
+      <input type="text" id="city" value="" placeholder="如：深圳 / 北京；留空按全国搜索">
+
+      <label>每个关键词收集数量</label>
+      <input type="number" id="count" value="5" min="1" max="20">
+
+      <button class="btn-primary" id="saveCfg">保存配置</button>
+      <span id="saved" class="ok-msg" style="display:none">✓ 已保存</span>
+    </div>
+  </section>
+
+  <!-- 运行 -->
+  <section class="card">
+    <div class="card-h"><span>② 开始找岗位</span></div>
+    <div class="card-b">
+      <button class="btn-go" id="btnCollect">开始找岗位</button>
+      <p class="run-help">按关键词依次搜索，自动筛选推荐岗位</p>
+      <div class="status-row">
+        <span id="phaseText">未开始</span>
+        <span id="progText"></span>
+      </div>
+      <div class="ctrl">
+        <button id="btnPause" disabled>暂停</button>
+        <button id="btnStop" disabled>停止</button>
+        <button id="btnReset">重置</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 审核 -->
+  <section class="card" id="reviewCard" style="display:none">
+    <div class="card-h"><span>③ 推荐岗位</span><span id="reviewCount"></span></div>
+    <div class="card-b">
+      <div class="review-tools">
+        <label class="mini"><input type="checkbox" id="selAll" checked> 全选</label>
+        <select id="exportScope" class="export-scope" aria-label="导出范围">
+          <option value="all">导出全部岗位</option>
+          <option value="filtered">导出当前筛选结果</option>
+        </select>
+        <button class="btn-secondary mini-wide" id="btnExportCsv">导出岗位池 CSV</button>
+        <button class="btn-go" id="btnDeliver">投递选中</button>
+      </div>
+      <div id="reviewList"></div>
+    </div>
+  </section>
+
+  <!-- 日志 -->
+  <section class="card">
+    <div class="card-h"><span>运行记录</span><button class="mini-btn" id="clearLog">清空</button></div>
+    <div class="log" id="log"></div>
+  </section>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>
