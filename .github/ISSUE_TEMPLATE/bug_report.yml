@@ -1,0 +1,60 @@
+name: 安装、适配或普通 Bug
+description: 反馈安装、配置、页面适配、代码学习和普通功能问题
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 提交 Issue 前请确认
+
+        欢迎反馈安装、配置、页面适配、代码学习和普通 Bug 问题。
+
+        请不要提交或讨论以下内容：
+
+        - 如何绕过平台风控
+        - 如何规避验证码
+        - 如何提高批量投递频率
+        - 多账号自动化操作
+        - 批量采集岗位、HR 或聊天数据
+        - 商用部署、代投服务、刷屏骚扰等用途
+
+        本项目仅供学习和个人本地辅助使用。因不当使用造成的账号限制、封禁、投诉或其他后果，由使用者自行承担。
+  - type: dropdown
+    id: issue_type
+    attributes:
+      label: 问题类型
+      options:
+        - 安装或加载扩展
+        - 配置或界面显示
+        - BOSS 页面适配
+        - 普通功能 Bug
+        - 代码学习与理解
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 扩展版本
+      placeholder: 例如 v0.4.7
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 问题描述
+      description: 请说明预期结果、实际结果和复现步骤；截图前请遮挡姓名、公司、聊天和 API Key。
+    validations:
+      required: true
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: 使用边界确认
+      options:
+        - label: 我的问题不涉及绕过风控、规避验证码、高频或多账号自动化。
+          required: true
+        - label: 我的问题不涉及批量采集数据、代投服务、刷屏或骚扰用途。
+          required: true
+        - label: 我已移除截图和日志中的个人信息、聊天内容及 API Key。
+          required: true
