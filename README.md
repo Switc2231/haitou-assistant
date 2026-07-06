@@ -14,7 +14,7 @@
 
 一个面向 BOSS 直聘的 Chrome / Edge 开源扩展：收集岗位、本地或 AI 辅助筛选、人工审核后逐个进入聊天，并发送简历图片和可选的自我介绍。
 
-本项目基于 MIT 项目 [JobCopilot](https://github.com/huluobo2237-pixel/JobCopilot) 二次开发，与 BOSS 直聘官方无关。
+
 
 ## 功能
 
