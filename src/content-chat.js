@@ -65,7 +65,8 @@
     const titleNorm = normText(job && (job.title || job.name));
     const companyNorm = normText(job && job.company);
     const visibleMatch = !!((titleNorm && contextNorm.indexOf(titleNorm) >= 0) || (companyNorm && contextNorm.indexOf(companyNorm) >= 0));
-    return { ok: true, proof: visibleMatch ? 'job-token+visible-context' : 'job-token', context: context };
+    if (!visibleMatch) return { ok: false, error: '当前聊天会话未显示目标岗位或公司，拒绝发送', context: context };
+    return { ok: true, proof: 'job-token+visible-context', context: context };
   }
 
   function clearExpectedChat() {
@@ -323,12 +324,7 @@
       clearExpectedChat();
       return { success: true, verified: imageSent, imageOnly: true, imageSent: imageSent, proof: chatCheck.proof + '+own-image-count-increased' };
     }
-    let input = await waitVisible(INPUT_SELS, 6000);
-    if (!input) {
-      const items = document.querySelectorAll(SELECTORS.chat.userList);
-      if (items[0]) { items[0].click(); await sleep(1500); }
-      input = await waitVisible(INPUT_SELS, 6000);
-    }
+    const input = await waitVisible(INPUT_SELS, 6000);
     if (!input) { clearExpectedChat(); return { success: false, imageSent: imageSent, error: '未找到输入框｜' + dumpInputs() }; }
     await sleep(800);
     let tr;

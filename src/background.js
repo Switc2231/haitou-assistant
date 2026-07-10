@@ -2,6 +2,7 @@
 importScripts(
   '/src/selectors.js',
   '/src/core/normalizeJob.js',
+  '/src/core/city.js',
   '/src/core/jobPool.js',
   '/src/core/scoring.js'
 );
@@ -11,6 +12,10 @@ const REQUEST_TIMEOUT_MS = 30000;
 const TAB_ACTION_TIMEOUT_MS = 15000;
 const DEFAULT_AI_BASE_URL = 'https://api.deepseek.com/v1';
 const DEFAULT_AI_MODEL = 'deepseek-chat';
+const BOSS_CITY_API = 'https://www.zhipin.com/wapi/zpCommon/data/cityGroup.json';
+const BOSS_CITY_CACHE_KEY = 'bossCityMapCacheV1';
+const BOSS_CITY_CACHE_AT_KEY = 'bossCityMapCacheAtV1';
+const BOSS_CITY_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FORBIDDEN_OUTGOING_PATTERNS = [
   /api\s*key/i,
   /插件(?:设置|配置|页面)?/i,
@@ -27,6 +32,8 @@ let state = {
 };
 let aiFailureLogged = false;
 let activeRun = null;
+let activeCityMap = Object.assign({}, typeof CITY_MAP !== 'undefined' ? CITY_MAP : {});
+let managedBossTabId = null;
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
@@ -303,26 +310,97 @@ function waitTabComplete(tabId) {
     chrome.tabs.get(tabId, (t) => { if (t && t.status === 'complete') finish(true); });
   });
 }
-function resolveCity(cfg) {
-  const firstCity = (cfg.city || '').split(/[\/、,，\s]+/)[0].replace(/[市省]$/, '') || '';
-  const code = (typeof CITY_MAP !== 'undefined' && CITY_MAP[firstCity]) || '100010000';
-  return { name: firstCity, code: code, found: code !== '100010000' || firstCity === '全国' };
+function cityFromTabUrl(url) {
+  try {
+    const code = JobCopilotCore.city.validCityCode(new URL(url || '').searchParams.get('city'));
+    return code ? { code: code, source: 'boss-url' } : null;
+  } catch (e) { return null; }
 }
-function buildSearchUrl(cfg, keyword) {
-  const c = resolveCity(cfg);
-  const params = new URLSearchParams({ query: keyword || cfg.keyword || '', city: c.code });
+async function loadBossCityMap() {
+  if (Object.keys(activeCityMap).length > 100) return activeCityMap;
+  try {
+    const cached = await chrome.storage.local.get([BOSS_CITY_CACHE_KEY, BOSS_CITY_CACHE_AT_KEY]);
+    const cachedMap = cached[BOSS_CITY_CACHE_KEY];
+    const cachedAt = Number(cached[BOSS_CITY_CACHE_AT_KEY]) || 0;
+    if (cachedMap && Object.keys(cachedMap).length > 100 && Date.now() - cachedAt < BOSS_CITY_CACHE_TTL_MS) {
+      activeCityMap = Object.assign({}, CITY_MAP, cachedMap);
+      return activeCityMap;
+    }
+  } catch (e) {}
+  try {
+    const resp = await withTimeout(fetch(BOSS_CITY_API, { credentials: 'include', cache: 'no-store' }), REQUEST_TIMEOUT_MS, '读取BOSS城市列表');
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const payload = await resp.json();
+    const map = JobCopilotCore.city.cityMapFromBossData(payload, CITY_MAP);
+    if (Object.keys(map).length < 100) throw new Error('城市数量异常');
+    activeCityMap = map;
+    await chrome.storage.local.set({ [BOSS_CITY_CACHE_KEY]: map, [BOSS_CITY_CACHE_AT_KEY]: Date.now() });
+    return activeCityMap;
+  } catch (e) {
+    log('未能刷新BOSS城市列表，暂用内置城市表：' + e.message, 'warn');
+    activeCityMap = Object.assign({}, CITY_MAP);
+    return activeCityMap;
+  }
+}
+async function readBossCurrentCity() {
+  let tabs = await chrome.tabs.query({ url: '*://*.zhipin.com/*' });
+  tabs = (tabs || []).sort((a, b) => (Number(b.active) - Number(a.active)) || ((b.lastAccessed || 0) - (a.lastAccessed || 0)));
+  for (const tab of tabs) {
+    const urlCity = cityFromTabUrl(tab.url);
+    await ensureInjected(tab.id, 'src/content-search.js');
+    const pageCity = await sendToTab(tab.id, { type: 'GET_CURRENT_CITY_V1' });
+    const code = JobCopilotCore.city.validCityCode(pageCity && pageCity.code) || (urlCity && urlCity.code) || '';
+    if (!code) continue;
+    const rawName = code === JobCopilotCore.city.NATIONAL_CODE ? '全国' : ((pageCity && pageCity.name) || JobCopilotCore.city.cityNameFromCode(code, activeCityMap) || '');
+    const name = JobCopilotCore.city.normalizeCityName(rawName, activeCityMap) || JobCopilotCore.city.cityNameFromCode(code, activeCityMap) || '';
+    return { found: true, name: name, code: code, source: (pageCity && pageCity.source) || (urlCity && urlCity.source) || 'boss-page', tabId: tab.id };
+  }
+  return null;
+}
+async function resolveSearchCity(cfg) {
+  await loadBossCityMap();
+  const current = await readBossCurrentCity();
+  const configured = JobCopilotCore.city.resolveConfiguredCity(cfg.city, activeCityMap);
+  if (current && current.code !== JobCopilotCore.city.NATIONAL_CODE) {
+    if (!current.name && configured.found && configured.code === current.code) current.name = configured.name;
+    return current;
+  }
+  if ((cfg.city || '').trim()) {
+    if (!configured.found) throw new Error('城市“' + cfg.city + '”未识别。请先在BOSS页面手动切换到目标城市，或填写受支持的城市名称。');
+    return configured;
+  }
+  if (current) return current;
+  return configured;
+}
+function buildSearchUrl(searchCity, keyword) {
+  const cityCode = JobCopilotCore.city.validCityCode(searchCity && searchCity.code);
+  if (!cityCode) throw new Error('搜索城市码缺失，已停止，避免打开 city=undefined 的全国异常页面。');
+  const params = new URLSearchParams({ query: keyword || '', city: cityCode });
   return 'https://www.zhipin.com/web/geek/jobs?' + params.toString();
 }
+function bossDetailUrl(job) {
+  try {
+    const url = new URL((job && (job.link || job.url)) || '');
+    const hostOk = url.hostname === 'zhipin.com' || url.hostname.endsWith('.zhipin.com');
+    if (url.protocol !== 'https:' || !hostOk || !/^\/job_detail\/[A-Za-z0-9_-]+\.html$/.test(url.pathname)) return '';
+    return url.href;
+  } catch (e) { return ''; }
+}
 async function ensureTab(url) {
-  let tabs = await chrome.tabs.query({ url: '*://*.zhipin.com/*' });
-  let tab = tabs[0];
-  if (!tab) tab = await chrome.tabs.create({ url: url });
-  else await chrome.tabs.update(tab.id, { url: url });
+  let tab = null;
+  if (managedBossTabId) {
+    try { tab = await chrome.tabs.get(managedBossTabId); }
+    catch (e) { managedBossTabId = null; }
+  }
+  if (!tab) tab = await chrome.tabs.create({ url: url, active: true });
+  else if (tab.url !== url) tab = await chrome.tabs.update(tab.id, { url: url });
+  managedBossTabId = tab.id;
   await waitTabComplete(tab.id);
   await sleep(2000);
-  return tab;
+  try { return await chrome.tabs.get(tab.id); }
+  catch (e) { managedBossTabId = null; throw new Error('BOSS工作标签页已关闭'); }
 }
-async function getSearchTab(cfg, keyword) { return ensureTab(buildSearchUrl(cfg, keyword)); }
+async function getSearchTab(searchCity, keyword) { return ensureTab(buildSearchUrl(searchCity, keyword)); }
 function curUrl(tabId) { return new Promise(res => chrome.tabs.get(tabId, t => res((t && t.url) || ''))); }
 async function waitForTabUrl(tabId, predicate, timeoutMs) {
   const deadline = Date.now() + (timeoutMs || TAB_ACTION_TIMEOUT_MS);
@@ -336,6 +414,52 @@ async function waitForTabUrl(tabId, predicate, timeoutMs) {
 
 function normalizeList(list, platform) {
   return (list || []).map(job => JobCopilotCore.normalizeJob(job, job.platform || platform));
+}
+async function enrichUnverifiedJobsFromDetails(jobs, searchCity) {
+  const list = Array.isArray(jobs) ? jobs : [];
+  if (!list.length) return list;
+  const targetName = JobCopilotCore.city.normalizeCityName(searchCity && searchCity.name, activeCityMap);
+  if (!targetName || targetName === '全国') return list;
+  const enriched = [];
+  let backfilled = 0;
+  let stillUnverified = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (state.aborted) break; await waitIfPaused();
+    const job = list[i];
+    const alreadyDetected = JobCopilotCore.city.detectJobCity(job, targetName, activeCityMap);
+    if (alreadyDetected) { enriched.push(job); continue; }
+    const detailUrl = bossDetailUrl(job);
+    if (!detailUrl) { enriched.push(job); stillUnverified++; continue; }
+    try {
+      const tab = await ensureTab(detailUrl);
+      await ensureInjected(tab.id, 'src/content-search.js');
+      const detail = await sendToTab(tab.id, { type: 'OPEN_JD_V4', job: job });
+      if (detail && detail.success) {
+        const merged = JobCopilotCore.normalizeJob(Object.assign({}, job, {
+          jd: job.jd || detail.jd || '',
+          detailLocation: detail.detailLocation || job.detailLocation || '',
+          workAddress: detail.workAddress || job.workAddress || '',
+          address: detail.address || job.address || '',
+          actionText: detail.actionText || job.actionText || '',
+          detailUrl: detail.detailUrl || detailUrl
+        }), 'boss');
+        const detected = JobCopilotCore.city.detectJobCity(merged, targetName, activeCityMap);
+        if (detected) backfilled++;
+        else stillUnverified++;
+        enriched.push(merged);
+      } else {
+        stillUnverified++;
+        enriched.push(job);
+      }
+    } catch (e) {
+      stillUnverified++;
+      enriched.push(job);
+    }
+    await rand(250, 650);
+  }
+  if (backfilled) log('  详情页补读城市成功 ' + backfilled + ' 个', 'success');
+  if (stillUnverified) log('  详情页仍有 ' + stillUnverified + ' 个城市读不到，保留人工确认', 'warn');
+  return enriched;
 }
 async function loadStoredPool() {
   const d = await withTimeout(chrome.storage.local.get(['sw_jobs', 'sw_screened']), REQUEST_TIMEOUT_MS, '读取岗位池');
@@ -433,10 +557,13 @@ async function runCollect() {
     log('AI增强未就绪：使用本地规则筛选；投递时优先使用填写完成的无AI自我介绍，否则仅发送简历图片。', 'warn');
   }
 
-  const _c = resolveCity(cfg);
+  let searchCity;
+  try { searchCity = await resolveSearchCity(cfg); }
+  catch (e) { log(e.message, 'error'); state.phase = 'idle'; pushPhase(); return; }
   log('关键词 ' + keywords.length + ' 个：' + keywords.join(' / '));
-  log('城市：' + (_c.found ? _c.name : '全国'));
-  if (cfg.city && !_c.found) log('城市"' + cfg.city + '"未识别，已按全国搜索', 'warn');
+  const cityLabel = searchCity.name || ('城市码 ' + searchCity.code);
+  log('城市：' + cityLabel + (String(searchCity.source || '').indexOf('boss') === 0 || /^(?:url|dom)/.test(searchCity.source || '') ? '（读取自BOSS当前页面）' : '（读取自插件设置）'));
+  if (searchCity.code === JobCopilotCore.city.NATIONAL_CODE) log('当前按全国搜索；如需指定城市，请先在BOSS页面切换城市。', 'warn');
   const count = Math.max(1, Math.min(parseInt(cfg.count) || 5, 20));
   const seenJobs = {};
   const bossJobs = [];
@@ -446,14 +573,20 @@ async function runCollect() {
     if (state.aborted) break; await waitIfPaused();
     const keyword = keywords[i];
     log('  [' + (i + 1) + '/' + keywords.length + '] 搜索：' + keyword);
-    const tab = await getSearchTab(cfg, keyword);
+    const tab = await getSearchTab(searchCity, keyword);
     await ensureInjected(tab.id, 'src/content-search.js');
     const r = await sendToTab(tab.id, { type: 'SCRAPE', count: count });
     if (!r || !r.success) { log('  收集失败：' + (r && r.error), 'error'); continue; }
+    const normalizedBatch = normalizeList((r.jobs || []).map(job => Object.assign({}, job, { sourceKeyword: keyword })), 'boss');
+    let guarded = JobCopilotCore.city.guardJobsForCity(normalizedBatch, searchCity, activeCityMap);
+    if (guarded.unverified.length) {
+      const enrichedBatch = await enrichUnverifiedJobsFromDetails(guarded.jobs, searchCity);
+      guarded = JobCopilotCore.city.guardJobsForCity(enrichedBatch, searchCity, activeCityMap);
+    }
+    if (guarded.mismatches.length) log('  已拦截明确异地岗位 ' + guarded.mismatches.length + ' 个', 'warn');
+    if (guarded.unverified.length) log('  有 ' + guarded.unverified.length + ' 个岗位城市无法识别，已保留并标记人工确认', 'warn');
     let added = 0;
-    (r.jobs || []).forEach(job => {
-      job.sourceKeyword = keyword;
-      const normalized = JobCopilotCore.normalizeJob(job, 'boss');
+    guarded.jobs.forEach(normalized => {
       const key = jobDedupeKey(normalized);
       if (!seenJobs[key] && bossJobs.length < MAX_COLLECT_TOTAL) {
         seenJobs[key] = 1;
@@ -461,7 +594,7 @@ async function runCollect() {
         added++;
       }
     });
-    log('  收到 ' + ((r.jobs || []).length) + ' 个，新增去重后 ' + added + ' 个');
+    log('  收到 ' + ((r.jobs || []).length) + ' 个，城市复核后 ' + guarded.jobs.length + ' 个，新增去重后 ' + added + ' 个');
     await rand(800, 1500);
   }
   log('BOSS 收集到 ' + bossJobs.length + ' 个去重岗位', bossJobs.length ? 'success' : 'warn');
@@ -501,12 +634,25 @@ async function runDeliver(jobIds) {
     if (alreadyHandled(job)) { recordSkip(job, '本地已有投递/沟通记录'); log('[' + (k + 1) + '/' + ids.length + '] 已有记录，跳过：' + job.name, 'warn'); progress(k + 1, ids.length, '正在投递'); continue; }
     log('正在投递 ' + (k + 1) + '/' + ids.length + '：' + (job.title || job.name) + ' - ' + (job.company || ''));
 
-    // 1. 回搜索页，点开卡片读取该岗位完整JD
-    const searchUrl = buildSearchUrl(cfg, job.sourceKeyword || parseKeywords(cfg.keyword)[0]);
-    const tab = await ensureTab(searchUrl);
+    // 1. 直接进入收集时保存的独立岗位详情页，读取完整JD
+    const detailUrl = bossDetailUrl(job);
+    if (!detailUrl) {
+      recordFail(job, '岗位详情链接缺失或不是BOSS详情页');
+      log('  安全停止：岗位详情链接缺失或不是BOSS详情页', 'error');
+      progress(k + 1, ids.length, '正在投递');
+      continue;
+    }
+    const tab = await ensureTab(detailUrl);
     await ensureInjected(tab.id, 'src/content-search.js');
-    log('  读取岗位JD...');
-    const jdr = await sendToTab(tab.id, { type: 'OPEN_JD_V3', job: job });
+    log('  已进入岗位详情页，读取岗位JD...');
+    const jdr = await sendToTab(tab.id, { type: 'OPEN_JD_V4', job: job });
+    if (!jdr || jdr.success === false) {
+      const detailError = (jdr && jdr.error) || '岗位详情页读取失败';
+      recordFail(job, detailError);
+      log('  详情读取失败：' + detailError, 'error');
+      progress(k + 1, ids.length, '正在投递');
+      continue;
+    }
     const jd = (jdr && jdr.jd) || '';
     if (jdr && (jdr.actionText === '继续沟通' || jdr.actionText === '已沟通')) {
       await markHandled(job, 'already_contacted', '', '详情页显示' + jdr.actionText);
@@ -541,7 +687,7 @@ async function runDeliver(jobIds) {
 
     // 3. 点立即沟通 → 继续沟通（跳聊天页）
     log('  建立联系（立即沟通 → 继续沟通）...');
-    const gr = await sendToTab(tab.id, { type: 'GO_CHAT_V3', job: job });
+    const gr = await sendToTab(tab.id, { type: 'GO_CHAT_V4', job: job });
     if (gr && gr.alreadyContacted) {
       await markHandled(job, 'already_contacted', greeting, gr.error || '页面显示已沟通');
       recordSkip(job, gr.error || '页面显示已沟通');
@@ -637,8 +783,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'OPEN_JOB_URL') {
     (async () => {
       const url = (msg.url || '').trim();
-      if (!/^https?:\/\//i.test(url)) return sendResponse({ ok: false, message: '这个岗位没有可打开的详情链接。', level: 'warn' });
-      await chrome.tabs.create({ url: url, active: true });
+      const safeUrl = bossDetailUrl({ url: url });
+      if (!safeUrl) return sendResponse({ ok: false, message: '这个岗位没有有效的BOSS详情链接。', level: 'warn' });
+      await chrome.tabs.create({ url: safeUrl, active: true });
       sendResponse({ ok: true, message: '已打开详情页' });
     })().catch(e => sendResponse({ ok: false, message: '打开详情失败：' + e.message, level: 'error' }));
     return true;
@@ -691,3 +838,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 loadProcessed().catch(() => {});
+chrome.tabs.onRemoved.addListener(tabId => {
+  if (tabId === managedBossTabId) managedBossTabId = null;
+});

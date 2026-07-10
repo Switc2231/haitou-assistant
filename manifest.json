@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "海投助手",
-  "version": "0.4.7",
-  "version_name": "0.4.7-image-lock-v6",
+  "version": "0.5.1",
+  "version_name": "0.5.1-city-detail-stable-v1",
   "description": "海投助手：BOSS 直聘岗位收集、AI筛选、自动沟通与简历投递。",
   "icons": { "16": "icons/icon16.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
   "action": { "default_title": "海投助手" },
@@ -12,7 +12,7 @@
   "background": { "service_worker": "src/background.js" },
   "content_scripts": [
     {
-      "matches": ["*://*.zhipin.com/web/geek/job*"],
+      "matches": ["*://*.zhipin.com/web/geek/job*", "*://*.zhipin.com/job_detail/*"],
       "js": ["src/selectors.js", "src/content-search.js"],
       "run_at": "document_idle"
     },

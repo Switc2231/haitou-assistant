@@ -6,7 +6,7 @@ const SELECTORS = {
     jobSalary: '.job-salary',
     tagList: '.tag-list li',
     company: '.company-name, .boss-info .company-name, [class*="company-name"]',
-    immediateChatBtn: 'a.op-btn-chat'
+    immediateChatBtn: '.job-detail-op .op-btn-chat, .op-btn.op-btn-chat, .op-btn-chat, .start-chat-btn'
   },
   chat: {
     userList: '.user-list-content li',

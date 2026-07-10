@@ -9,9 +9,9 @@
   <header class="header">
     <div>
       <h1>海投助手</h1>
-      <p>BOSS直聘 · 岗位收集、审核与辅助投递</p>
+      <p>BOSS直聘 · 自动收集与投递</p>
     </div>
-    <span class="version-badge">v0.4.7 图片防重版</span>
+    <span class="version-badge">v0.5.1 城市同步·独立详情版</span>
   </header>
 
   <!-- 配置 -->
@@ -60,8 +60,9 @@
       <textarea id="excludeWords" rows="3" placeholder="如：电话销售、地推、课程顾问"></textarea>
       <p class="field-help">命中排除词时不推荐。这里可以按岗位方向自行增删，不再固定写死在后台。</p>
 
-      <label>城市</label>
-      <input type="text" id="city" value="" placeholder="如：深圳 / 北京；留空按全国搜索">
+      <label>城市（BOSS当前城市优先）</label>
+      <input type="text" id="city" value="" placeholder="可留空；建议先在BOSS页面切换城市">
+      <p class="field-help">插件优先读取BOSS页面当前城市；这里仅作备用。无法识别时会停止，不会自动改成全国。</p>
 
       <label>每个关键词收集数量</label>
       <input type="number" id="count" value="5" min="1" max="20">
@@ -97,7 +98,7 @@
         <label class="mini"><input type="checkbox" id="selAll" checked> 全选</label>
         <select id="exportScope" class="export-scope" aria-label="导出范围">
           <option value="all">导出全部岗位</option>
-          <option value="filtered">导出当前筛选结果</option>
+          <option value="filtered">仅导出匹配岗位</option>
         </select>
         <button class="btn-secondary mini-wide" id="btnExportCsv">导出岗位池 CSV</button>
         <button class="btn-go" id="btnDeliver">投递选中</button>

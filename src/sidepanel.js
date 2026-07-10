@@ -6,6 +6,7 @@ const AI_BOOL_FIELDS = ['aiEnabled'];
 const LEGACY_AI_FIELDS = ['dsKey', 'deepseekKey', 'dsModel', 'deepseekModel', 'dsBaseUrl', 'deepseekBaseUrl'];
 const MAX_DELIVER_PER_RUN = 5;
 const MAX_LOG_ITEMS = 200;
+const MAX_RESUME_IMAGE_BYTES = 4 * 1024 * 1024;
 const DEFAULT_AI_BASE_URL = 'https://api.deepseek.com/v1';
 const DEFAULT_AI_MODEL = 'deepseek-chat';
 let currentScreened = [];
@@ -96,8 +97,26 @@ function showImg(dataUrl) { $('imgPrev').innerHTML = '<img src="' + dataUrl + '"
 
 $('resumeImg').addEventListener('change', (e) => {
   const file = e.target.files[0]; if (!file) return;
+  if (file.size > MAX_RESUME_IMAGE_BYTES) {
+    e.target.value = '';
+    return addLog('简历图片超过4MB，请压缩后重新上传，避免浏览器本地存储失败。', 'error');
+  }
   const reader = new FileReader();
-  reader.onload = (ev) => { hasResumeImage = true; showImg(ev.target.result); chrome.storage.local.set({ resumeImage: ev.target.result }); };
+  reader.onerror = () => addLog('简历图片读取失败，请重新选择。', 'error');
+  reader.onload = (ev) => {
+    const dataUrl = ev.target.result;
+    chrome.storage.local.set({ resumeImage: dataUrl }, () => {
+      if (chrome.runtime.lastError) {
+        hasResumeImage = false;
+        $('imgPrev').innerHTML = '';
+        addLog('简历图片保存失败：' + chrome.runtime.lastError.message, 'error');
+        return;
+      }
+      hasResumeImage = true;
+      showImg(dataUrl);
+      addLog('简历图片已保存。', 'success');
+    });
+  };
   reader.readAsDataURL(file);
 });
 
@@ -158,7 +177,10 @@ function getAiEndpointDefaults() {
 $('btnCollect').addEventListener('click', async () => {
   await saveCfgSync();
   if (!$('keyword').value.trim()) return addLog('请先填岗位关键词，可一行一个', 'error');
-  if (!$('aiEnabled').checked) addLog('AI增强未开启：使用本地规则筛选；投递时使用填写完成的无AI自我介绍，未填写则只发送简历图片。', 'warn');
+  if (!$('aiEnabled').checked) {
+    const deliveryMode = noAiGreetingReady() ? '投递时使用已填写的无AI自我介绍。' : '没有有效自我介绍时只发送已上传的简历图片。';
+    addLog('AI增强未开启：使用本地规则筛选；' + deliveryMode, 'warn');
+  }
   $('reviewCard').style.display = 'none';
   setRunning(true);
   chrome.runtime.sendMessage({ type: 'START_COLLECT' }, (resp) => {
@@ -213,7 +235,10 @@ $('selAll').addEventListener('change', (e) => {
 
 $('btnExportCsv').addEventListener('click', () => {
   chrome.runtime.sendMessage({ type: 'GET_JOB_POOL' }, (resp) => {
-    const sourceRows = resp && resp.ok && Array.isArray(resp.jobs) ? resp.jobs : currentScreened;
+    const allRows = resp && resp.ok && Array.isArray(resp.jobs) ? resp.jobs : currentScreened;
+    const sourceRows = $('exportScope').value === 'filtered'
+      ? currentScreened.filter(job => job && job.match === true)
+      : allRows;
     exportCsv(sourceRows || []);
   });
 });

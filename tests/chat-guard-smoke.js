@@ -29,6 +29,7 @@ const context = {
   },
   document: {
     querySelectorAll: selector => {
+      if (selector.includes('chat-header') || selector.includes('conversation-title')) return [{ innerText: '行政文员 · 甲公司' }];
       if (selector.includes('input[type=file]')) return [fileInput];
       if (selector.includes('item-myself')) return sentImageCount ? [ownImageMessage] : [];
       return [];
